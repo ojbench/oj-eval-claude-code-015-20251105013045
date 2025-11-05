@@ -29,7 +29,7 @@ private:
     string filename;
     string delete_filename;
     int operation_count;
-    static const int COMPACT_THRESHOLD = 1000;
+    static const int COMPACT_THRESHOLD = 100;
 
 public:
     FileStorage(const string& fname) : filename(fname),
@@ -83,22 +83,16 @@ public:
         // Read all entries from main file
         vector<Entry> entries = read_all_entries(filename);
 
-        // Read deleted entries
+        // Read deleted entries and create a set for fast lookup
         vector<Entry> deleted_entries = read_all_entries(delete_filename);
+        set<Entry> deleted_set(deleted_entries.begin(), deleted_entries.end());
 
         // Use set to avoid duplicates and maintain order
         set<int> value_set;
         for (const auto& entry : entries) {
             if (strcmp(entry.key, key.c_str()) == 0) {
                 // Check if this entry is deleted
-                bool is_deleted = false;
-                for (const auto& deleted : deleted_entries) {
-                    if (entry == deleted) {
-                        is_deleted = true;
-                        break;
-                    }
-                }
-                if (!is_deleted) {
+                if (deleted_set.find(entry) == deleted_set.end()) {
                     value_set.insert(entry.value);
                 }
             }
