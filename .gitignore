@@ -1,0 +1,7 @@
+CMakeFiles/
+CMakeCache.txt
+*.o
+code
+*.db
+*.dat
+*.tmp
