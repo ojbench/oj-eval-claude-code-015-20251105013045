@@ -5,94 +5,159 @@
 #include <algorithm>
 #include <cstring>
 #include <set>
-#include <filesystem>
 
 using namespace std;
 
+// Structure to store key-value pair
+struct Entry {
+    char key[65];  // 64 bytes + null terminator
+    int value;
+
+    bool operator<(const Entry& other) const {
+        int key_cmp = strcmp(key, other.key);
+        if (key_cmp != 0) return key_cmp < 0;
+        return value < other.value;
+    }
+
+    bool operator==(const Entry& other) const {
+        return strcmp(key, other.key) == 0 && value == other.value;
+    }
+};
+
 class FileStorage {
 private:
-    string data_dir;
+    string filename;
+    string delete_filename;
+    int operation_count;
+    static const int COMPACT_THRESHOLD = 50;
 
 public:
-    FileStorage(const string& dir) : data_dir(dir) {
-        // Create data directory if it doesn't exist
-        filesystem::create_directories(data_dir);
+    FileStorage(const string& fname) : filename(fname),
+                                       delete_filename(fname + ".deleted"),
+                                       operation_count(0) {
+        // Create files if they don't exist
+        ofstream file(filename, ios::binary | ios::app);
+        file.close();
+        ofstream dfile(delete_filename, ios::binary | ios::app);
+        dfile.close();
     }
 
     void insert(const string& key, int value) {
-        string filename = data_dir + "/" + key + ".dat";
+        Entry new_entry;
+        strncpy(new_entry.key, key.c_str(), 64);
+        new_entry.key[64] = '\0';
+        new_entry.value = value;
 
-        // Read existing values
-        set<int> values = read_values(filename);
+        // Use append-only approach for better performance
+        ofstream file(filename, ios::binary | ios::app);
+        file.write(reinterpret_cast<char*>(&new_entry), sizeof(Entry));
+        file.close();
 
-        // Insert new value
-        values.insert(value);
-
-        // Write back to file
-        write_values(filename, values);
+        operation_count++;
+        if (operation_count >= COMPACT_THRESHOLD) {
+            compact_files();
+            operation_count = 0;
+        }
     }
 
     void remove(const string& key, int value) {
-        string filename = data_dir + "/" + key + ".dat";
+        // Mark entry as deleted by writing to a separate file
+        ofstream delete_file(delete_filename, ios::binary | ios::app);
 
-        // Check if file exists
-        if (!filesystem::exists(filename)) {
-            return;
-        }
+        Entry delete_entry;
+        strncpy(delete_entry.key, key.c_str(), 64);
+        delete_entry.key[64] = '\0';
+        delete_entry.value = value;
 
-        // Read existing values
-        set<int> values = read_values(filename);
+        delete_file.write(reinterpret_cast<char*>(&delete_entry), sizeof(Entry));
+        delete_file.close();
 
-        // Remove value if exists
-        values.erase(value);
-
-        // Write back to file or delete if empty
-        if (values.empty()) {
-            filesystem::remove(filename);
-        } else {
-            write_values(filename, values);
+        operation_count++;
+        if (operation_count >= COMPACT_THRESHOLD) {
+            compact_files();
+            operation_count = 0;
         }
     }
 
     vector<int> find(const string& key) {
-        string filename = data_dir + "/" + key + ".dat";
+        // Read all entries from main file
+        vector<Entry> entries = read_all_entries(filename);
 
-        // Check if file exists
-        if (!filesystem::exists(filename)) {
-            return {};
+        // Read deleted entries
+        vector<Entry> deleted_entries = read_all_entries(delete_filename);
+
+        // Use set to avoid duplicates and maintain order
+        set<int> value_set;
+        for (const auto& entry : entries) {
+            if (strcmp(entry.key, key.c_str()) == 0) {
+                // Check if this entry is deleted
+                bool is_deleted = false;
+                for (const auto& deleted : deleted_entries) {
+                    if (entry == deleted) {
+                        is_deleted = true;
+                        break;
+                    }
+                }
+                if (!is_deleted) {
+                    value_set.insert(entry.value);
+                }
+            }
         }
 
-        // Read values
-        set<int> values = read_values(filename);
-        return vector<int>(values.begin(), values.end());
+        return vector<int>(value_set.begin(), value_set.end());
     }
 
 private:
-    set<int> read_values(const string& filename) {
-        set<int> values;
+    vector<Entry> read_all_entries(const string& fname) {
+        vector<Entry> entries;
+        ifstream file(fname, ios::binary);
 
-        ifstream file(filename, ios::binary);
         if (!file.is_open()) {
-            return values;
+            return entries;
         }
 
-        int value;
-        while (file.read(reinterpret_cast<char*>(&value), sizeof(int))) {
-            values.insert(value);
+        Entry entry;
+        while (file.read(reinterpret_cast<char*>(&entry), sizeof(Entry))) {
+            entries.push_back(entry);
         }
-
         file.close();
-        return values;
+
+        return entries;
     }
 
-    void write_values(const string& filename, const set<int>& values) {
-        ofstream file(filename, ios::binary | ios::trunc);
+    void compact_files() {
+        // Read all entries
+        vector<Entry> all_entries = read_all_entries(filename);
+        vector<Entry> deleted_entries = read_all_entries(delete_filename);
 
-        for (int value : values) {
-            file.write(reinterpret_cast<const char*>(&value), sizeof(int));
+        // Create set of deleted entries for fast lookup
+        set<Entry> deleted_set(deleted_entries.begin(), deleted_entries.end());
+
+        // Filter out deleted entries
+        vector<Entry> live_entries;
+        for (const auto& entry : all_entries) {
+            if (deleted_set.find(entry) == deleted_set.end()) {
+                live_entries.push_back(entry);
+            }
         }
 
+        // Sort live entries
+        sort(live_entries.begin(), live_entries.end());
+
+        // Remove duplicates
+        auto last = unique(live_entries.begin(), live_entries.end());
+        live_entries.erase(last, live_entries.end());
+
+        // Write back compacted file
+        ofstream file(filename, ios::binary | ios::trunc);
+        for (const auto& entry : live_entries) {
+            file.write(reinterpret_cast<const char*>(&entry), sizeof(Entry));
+        }
         file.close();
+
+        // Clear deletion file
+        ofstream dfile(delete_filename, ios::binary | ios::trunc);
+        dfile.close();
     }
 };
 
@@ -100,7 +165,7 @@ int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
 
-    FileStorage storage("data");
+    FileStorage storage("data.db");
 
     int n;
     cin >> n;
