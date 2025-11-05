@@ -35,70 +35,66 @@ public:
     }
 
     void insert(const string& key, int value) {
+        // Check if entry already exists
+        if (exists(key, value)) {
+            return;  // Already exists, no need to insert
+        }
+
         Entry new_entry;
         strncpy(new_entry.key, key.c_str(), 64);
         new_entry.key[64] = '\0';
         new_entry.value = value;
 
-        // Use append-only approach for better performance
-        ofstream file(filename, ios::binary | ios::app);
-        file.write(reinterpret_cast<char*>(&new_entry), sizeof(Entry));
-        file.close();
+        // Read all entries and insert in sorted position
+        vector<Entry> entries = read_all_entries();
+
+        // Find insertion position using binary search
+        auto pos = lower_bound(entries.begin(), entries.end(), new_entry);
+        entries.insert(pos, new_entry);
+
+        write_all_entries(entries);
     }
 
     void remove(const string& key, int value) {
-        // Mark entry as deleted by writing to a separate file
-        // This avoids rewriting the entire file
-        string delete_filename = filename + ".deleted";
-        ofstream delete_file(delete_filename, ios::binary | ios::app);
+        Entry target;
+        strncpy(target.key, key.c_str(), 64);
+        target.key[64] = '\0';
+        target.value = value;
 
-        Entry delete_entry;
-        strncpy(delete_entry.key, key.c_str(), 64);
-        delete_entry.key[64] = '\0';
-        delete_entry.value = value;
+        // Read all entries and remove target
+        vector<Entry> entries = read_all_entries();
 
-        delete_file.write(reinterpret_cast<char*>(&delete_entry), sizeof(Entry));
-        delete_file.close();
+        auto pos = lower_bound(entries.begin(), entries.end(), target);
+        if (pos != entries.end() && *pos == target) {
+            entries.erase(pos);
+            write_all_entries(entries);
+        }
     }
 
     vector<int> find(const string& key) {
-        // Read all entries from main file
-        vector<Entry> entries = read_all_entries(filename);
-
-        // Read deleted entries
-        vector<Entry> deleted_entries = read_all_entries(filename + ".deleted");
-
-        // Filter out deleted entries and entries with different keys
+        vector<Entry> entries = read_all_entries();
         vector<int> values;
-        for (const auto& entry : entries) {
-            if (strcmp(entry.key, key.c_str()) == 0) {
-                // Check if this entry is deleted
-                bool is_deleted = false;
-                for (const auto& deleted : deleted_entries) {
-                    if (entry == deleted) {
-                        is_deleted = true;
-                        break;
-                    }
-                }
-                if (!is_deleted) {
-                    values.push_back(entry.value);
-                }
-            }
+
+        // Binary search for first occurrence of key
+        Entry search_key;
+        strncpy(search_key.key, key.c_str(), 64);
+        search_key.key[64] = '\0';
+        search_key.value = -1;  // Minimum value
+
+        auto start = lower_bound(entries.begin(), entries.end(), search_key);
+
+        // Collect all values for this key
+        for (auto it = start; it != entries.end() && strcmp(it->key, key.c_str()) == 0; ++it) {
+            values.push_back(it->value);
         }
 
-        sort(values.begin(), values.end());
-        values.erase(unique(values.begin(), values.end()), values.end());
         return values;
     }
 
 private:
-    vector<Entry> read_all_entries(const string& fname) {
+    vector<Entry> read_all_entries() {
         vector<Entry> entries;
-        ifstream file(fname, ios::binary);
-
-        if (!file.is_open()) {
-            return entries;
-        }
+        ifstream file(filename, ios::binary);
 
         Entry entry;
         while (file.read(reinterpret_cast<char*>(&entry), sizeof(Entry))) {
@@ -107,6 +103,25 @@ private:
         file.close();
 
         return entries;
+    }
+
+    void write_all_entries(const vector<Entry>& entries) {
+        ofstream file(filename, ios::binary | ios::trunc);
+        for (const auto& entry : entries) {
+            file.write(reinterpret_cast<const char*>(&entry), sizeof(Entry));
+        }
+        file.close();
+    }
+
+    bool exists(const string& key, int value) {
+        Entry target;
+        strncpy(target.key, key.c_str(), 64);
+        target.key[64] = '\0';
+        target.value = value;
+
+        vector<Entry> entries = read_all_entries();
+        auto pos = lower_bound(entries.begin(), entries.end(), target);
+        return pos != entries.end() && *pos == target;
     }
 };
 

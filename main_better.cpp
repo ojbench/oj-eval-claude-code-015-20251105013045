@@ -35,6 +35,11 @@ public:
     }
 
     void insert(const string& key, int value) {
+        // Check if entry already exists
+        if (exists(key, value)) {
+            return;  // Already exists, no need to insert
+        }
+
         Entry new_entry;
         strncpy(new_entry.key, key.c_str(), 64);
         new_entry.key[64] = '\0';
@@ -87,7 +92,6 @@ public:
         }
 
         sort(values.begin(), values.end());
-        values.erase(unique(values.begin(), values.end()), values.end());
         return values;
     }
 
@@ -107,6 +111,33 @@ private:
         file.close();
 
         return entries;
+    }
+
+    bool exists(const string& key, int value) {
+        Entry target;
+        strncpy(target.key, key.c_str(), 64);
+        target.key[64] = '\0';
+        target.value = value;
+
+        // Read all entries from main file
+        vector<Entry> entries = read_all_entries(filename);
+
+        // Read deleted entries
+        vector<Entry> deleted_entries = read_all_entries(filename + ".deleted");
+
+        // Check if entry exists and is not deleted
+        for (const auto& entry : entries) {
+            if (entry == target) {
+                // Check if this entry is deleted
+                for (const auto& deleted : deleted_entries) {
+                    if (entry == deleted) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
     }
 };
 
